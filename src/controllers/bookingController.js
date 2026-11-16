@@ -1,6 +1,7 @@
 
 const pool = require('../config/db');
 const { mapToCamelCase } = require('../utils/mapper');
+const { createUploadToken } = require('./photoController');
 
 const {
   haversineDistanceKm,
@@ -84,6 +85,7 @@ function withTimeout(promise, timeoutMs, message) {
 }
 
 
+
 async function createBooking(req, res) {
   const {
     emergencyType,
@@ -92,7 +94,14 @@ async function createBooking(req, res) {
     ambulanceId,
     hospitalId,
     patientId,
+    contactNumber,
+    incidentSeverity,
+    patientCondition,
   } = req.body || {};
+
+  const isGuest = req.isGuestBooking === true;
+
+  let securityUploadToken = null;
 
   if (!EMERGENCY_TYPES.includes(emergencyType)) {
     return sendError(
@@ -114,10 +123,61 @@ async function createBooking(req, res) {
     );
   }
 
-  const effectivePatientId =
-    ['ops', 'admin'].includes(req.user.role)
-      ? (patientId || req.user.id)
-      : req.user.id;
+  if (isGuest) {
+    const validSeverities = [
+      'critical', 'high', 'moderate', 'low',
+    ];
+
+    if (
+      typeof contactNumber !== 'string' ||
+      !/^\+?[0-9]{7,15}$/.test(contactNumber.trim())
+    ) {
+      return sendError(
+        res, 400, 'VALIDATION_ERROR', 'Invalid contactNumber'
+      );
+    }
+
+    if (!validSeverities.includes(incidentSeverity)) {
+      return sendError(
+        res, 400, 'VALIDATION_ERROR', 'Invalid incidentSeverity'
+      );
+    }
+
+    if (
+      typeof patientCondition !== 'string' ||
+      !patientCondition.trim()
+    ) {
+      return sendError(
+        res, 400, 'VALIDATION_ERROR', 'Patient condition is required'
+      );
+    }
+  }
+
+  // Guest bookings must use backend/AI allocation.
+  if (
+    isGuest &&
+    (
+      (ambulanceId !== undefined && ambulanceId !== null && ambulanceId !== '') ||
+      (hospitalId !== undefined && hospitalId !== null && hospitalId !== '')
+    )
+  ) {
+    return sendError(
+      res,
+      400,
+      'VALIDATION_ERROR',
+      'Guest bookings cannot specify ambulanceId or hospitalId'
+    );
+  }
+
+
+  const effectivePatientId = isGuest
+    ? null
+    : (
+        ['ops', 'admin'].includes(req.user.role)
+          ? (patientId || req.user.id)
+          : req.user.id
+      );
+
 
   let booking;
 
@@ -127,14 +187,16 @@ async function createBooking(req, res) {
   try {
     await client.query('BEGIN');
 
-    const patient = await client.query(
-      'SELECT id FROM users WHERE id = $1',
-      [effectivePatientId]
-    );
+    if (!isGuest) {
+      const patient = await client.query(
+        'SELECT id FROM users WHERE id = $1',
+        [effectivePatientId]
+      );
 
-    if (patient.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return sendError(res, 404, 'NOT_FOUND', 'Patient not found');
+      if (patient.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return sendError(res, 404, 'NOT_FOUND', 'Patient not found');
+      }
     }
 
     if (ambulanceId) {
@@ -171,10 +233,12 @@ async function createBooking(req, res) {
     const inserted = await client.query(
       `INSERT INTO bookings
         (patient_id, emergency_type, pickup_lat, pickup_lng,
-         ambulance_id, hospital_id, status, ai_status,
-         recommendation_reason)
-       VALUES ($1, $2, $3, $4, $5, $6, 'requested', 'pending', NULL)
-       RETURNING *`,
+        ambulance_id, hospital_id, contact_number,
+        incident_severity, patient_condition,
+        status, ai_status, recommendation_reason)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+              'requested', 'pending', NULL)
+      RETURNING *`,
       [
         effectivePatientId,
         emergencyType,
@@ -182,10 +246,21 @@ async function createBooking(req, res) {
         lng,
         ambulanceId || null,
         hospitalId || null,
+        isGuest ? contactNumber.trim() : null,
+        isGuest ? incidentSeverity : null,
+        isGuest ? patientCondition.trim() : null,
       ]
     );
 
     booking = inserted.rows[0];
+
+    if (isGuest) {
+      securityUploadToken = await createUploadToken(
+        client,
+        inserted.rows[0].id,
+        'security'
+      );
+    }
 
     await client.query('COMMIT');
   } catch (error) {
@@ -489,7 +564,17 @@ async function createBooking(req, res) {
 
   return res.status(201).json({
     data: mapToCamelCase(booking),
+    ...(isGuest && {
+      uploadTokens: {
+        security: securityUploadToken,
+      },
+    }),
   });
+}
+
+async function createGuestBooking(req, res) {
+  req.isGuestBooking = true;
+  return createBooking(req, res);
 }
 
 async function getBooking(req, res) {
@@ -754,6 +839,7 @@ async function updateBookingStatus(req, res) {
 
 module.exports = {
   createBooking,
+  createGuestBooking,
   getBooking,
   listBookings,
   updateBookingStatus,
