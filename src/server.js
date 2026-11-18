@@ -8,6 +8,18 @@ const authRoutes = require('./routes/authRoutes');
 
 const locationRoutes = require('./routes/locationRoutes');
 
+const labTestRoutes = require('./routes/labTestRoutes');
+
+const labBookingRoutes = require('./routes/labBookingRoutes');
+
+const labSampleRoutes = require('./routes/labSampleRoutes');
+
+const labReportRoutes = require('./routes/labReportRoutes');
+
+const labInvoiceRoutes = require('./routes/labInvoiceRoutes');
+
+const labPaymentRoutes = require('./routes/labPaymentRoutes');
+
 require('dotenv').config();
 
 
@@ -32,6 +44,18 @@ app.use('/api/hospitals', hospitalRoutes);
 app.use('/api/auth', authRoutes);
 
 app.use('/api/bookings', bookingRoutes);
+
+app.use('/api/lab-tests', labTestRoutes);
+
+app.use('/api/lab-bookings', labBookingRoutes);
+
+app.use('/api/lab-samples', labSampleRoutes);
+
+app.use('/api/lab-reports', labReportRoutes);
+
+app.use('/api/lab-invoices', labInvoiceRoutes);
+
+app.use('/api/lab-payments', labPaymentRoutes);
 
 // Health check
 app.get('/api/health', async (req, res) => {

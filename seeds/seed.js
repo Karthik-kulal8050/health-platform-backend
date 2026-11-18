@@ -3,6 +3,8 @@ require('dotenv').config();
 
 const pool = require('../src/config/db');
 
+const seedLabTests = require('./labTests');
+
 const ambulanceTypes = [
   'ICU', 'ICU', 'ICU', 'ICU',
   'ALS', 'ALS', 'ALS', 'ALS', 'ALS',
@@ -105,7 +107,8 @@ async function seed() {
     }
 
     await client.query('COMMIT');
-    console.log('Seed completed: 15 ambulances and 20 hospitals.');
+    await seedLabTests();
+    console.log('Seed completed: 15 ambulances, 20 hospitals, and lab tests.');
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Seed failed:', error.message);
